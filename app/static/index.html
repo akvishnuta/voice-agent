@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zepto Voice Agent</title>
+  <script defer src="/static/app.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <div id="app">
+    <!-- Header -->
+    <header>
+      <div class="header-left">
+        <span class="logo">🛵</span>
+        <div>
+          <h1>Zepto Voice Agent</h1>
+          <span class="status-badge" id="statusBadge">Ready</span>
+        </div>
+      </div>
+      <button class="icon-btn" id="ttsToggle" title="Toggle voice replies">
+        <span id="ttsIcon">🔊</span>
+      </button>
+    </header>
+
+    <!-- Chat messages -->
+    <main id="chat">
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">🎤</div>
+        <h2>Say your order</h2>
+        <p>
+          Tap the mic and say something like<br>
+          <em>"Order milk, eggs and bread. Buy cheapest. Max ₹600."</em>
+        </p>
+        <p class="or">— or type below —</p>
+      </div>
+      <div id="messages"></div>
+    </main>
+
+    <!-- Input bar -->
+    <footer>
+      <div class="input-row">
+        <button class="mic-btn" id="micBtn" title="Click to speak">
+          <span id="micIcon">🎤</span>
+        </button>
+        <input
+          type="text"
+          id="textInput"
+          placeholder="Type your command…"
+          autocomplete="off"
+        />
+        <button class="send-btn" id="sendBtn" disabled>Send</button>
+      </div>
+      <div class="listening-indicator" id="listeningIndicator" hidden>
+        <span class="listening-dot"></span> Listening…
+      </div>
+    </footer>
+  </div>
+
+</body>
+</html>

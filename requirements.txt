@@ -4,6 +4,13 @@ pydantic-settings==2.5.2
 pandas==2.2.2
 python-dotenv==1.0.1
 
+# Agent — LLM
+anthropic==0.49.0
+openai==1.65.0
+
+# Agent — browser automation
+playwright==1.49.0
+
 # Dev
 pytest==8.3.2
 httpx==0.27.0
