@@ -43,7 +43,11 @@ class ChatMessage(BaseModel):
     text: str
     type: str = Field(
         default="message",
-        description="message | confirmation | progress | error | success | done",
+        description="message | confirmation | progress | error | success | done | otp",
+    )
+    audio_url: str | None = Field(
+        default=None,
+        description="URL to TTS-generated audio file for this message",
     )
 
 
@@ -59,6 +63,7 @@ class SessionStatus(BaseModel):
     cart_total: float | None = None
     confirmation_needed: str | None = None
     confirmation_data: dict | None = None
+    otp_requested: bool = False
     messages: list[ChatMessage] = []
 
 

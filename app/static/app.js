@@ -4,25 +4,56 @@
   "use strict";
 
   // ── DOM ──────────────────────────────────────────────────────────
-  const $ = (id) => document.getElementById(id);
-  const chatEl = $("chat");
-  const messagesEl = $("messages");
-  const welcomeEl = $("welcome");
-  const micBtn = $("micBtn");
-  const micIcon = $("micIcon");
-  const textInput = $("textInput");
-  const sendBtn = $("sendBtn");
-  const statusBadge = $("statusBadge");
-  const listenIndicator = $("listeningIndicator");
-  const ttsToggle = $("ttsToggle");
-  const ttsIcon = $("ttsIcon");
+  const chatEl = document.getElementById("chat");
+  const messagesEl = document.getElementById("messages");
+  const welcomeEl = document.getElementById("welcome");
+  const micBtn = document.getElementById("micBtn");
+  const micIcon = document.getElementById("micIcon");
+  const textInput = document.getElementById("textInput");
+  const sendBtn = document.getElementById("sendBtn");
+  const statusBadge = document.getElementById("statusBadge");
+  const listenIndicator = document.getElementById("listeningIndicator");
+  const ttsToggle = document.getElementById("ttsToggle");
+  const ttsIcon = document.getElementById("ttsIcon");
 
   // ── State ────────────────────────────────────────────────────────
   let sessionId = null;
+  let sessionStatus = "";
   let pollingId = null;
-  let isSpeaking = false;
   let ttsEnabled = true;
   let knownMessageCount = 0;
+  let audioContext = null;
+  let isSending = false;
+
+  console.log("🛵 Zepto Voice Agent — chat UI loaded");
+
+  // ── Audio (backend TTS via gTTS) ─────────────────────────────────
+
+  function primeAudio() {
+    if (!audioContext) {
+      try {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        console.log("🔊 AudioContext primed");
+      } catch (_) { /* noop */ }
+    }
+    if (audioContext && audioContext.state === "suspended") {
+      audioContext.resume().catch(() => {});
+    }
+  }
+
+  function playAudio(url) {
+    if (!ttsEnabled || !url) return;
+    primeAudio();
+    const audio = new Audio(url);
+    audio.play().catch((err) => console.warn("🔇 Autoplay blocked:", err.message));
+  }
+
+  function playTextAsAudio(text) {
+    if (!ttsEnabled || !text) return;
+    primeAudio();
+    const url = `/api/v1/agent/tts?text=${encodeURIComponent(text)}`;
+    new Audio(url).play().catch((err) => console.warn("🔇 TTS autoplay blocked:", err.message));
+  }
 
   // ── Speech Recognition (STT) ─────────────────────────────────────
   const SpeechRecognition =
@@ -34,7 +65,7 @@
 
   function startListening() {
     if (!supportsSTT()) {
-      addMessage("agent", "Speech recognition isn't available in this browser. Try Chrome.", "error");
+      addMessage("agent", "Speech recognition not available. Try Chrome.", "error");
       return;
     }
     if (isListening) return;
@@ -61,13 +92,18 @@
 
     recognition.onend = () => {
       stopListening();
-      if (finalText.trim()) {
-        textInput.value = finalText.trim();
+      const trimmed = finalText.trim();
+      if (trimmed) {
+        console.log("🎤 STT heard:", trimmed);
+        textInput.value = trimmed;
         handleSend();
+      } else {
+        console.log("🎤 STT ended — no speech detected");
       }
     };
 
     recognition.start();
+    console.log("🎤 Listening…");
   }
 
   function stopListening() {
@@ -81,44 +117,10 @@
     }
   }
 
-  // ── Speech Synthesis (TTS) ──────────────────────────────────────
-  function speak(text) {
-    if (!ttsEnabled || !text || isSpeaking) return;
-    if (!window.speechSynthesis) return;
-
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-IN";
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-
-    // Pick an Indian English voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const indianVoice = voices.find(
-      (v) => v.lang.startsWith("en") && v.lang.includes("IN")
-    );
-    if (indianVoice) utterance.voice = indianVoice;
-
-    isSpeaking = true;
-    utterance.onend = () => { isSpeaking = false; };
-    utterance.onerror = () => { isSpeaking = false; };
-
-    window.speechSynthesis.speak(utterance);
-  }
-
-  // Pre-load voices (they load async)
-  if (window.speechSynthesis) {
-    window.speechSynthesis.getVoices(); // trigger async load
-    window.speechSynthesis.onvoiceschanged = () => {
-      window.speechSynthesis.getVoices();
-    };
-  }
-
   // ── Chat rendering ──────────────────────────────────────────────
-  function addMessage(role, text, type, extra) {
+  function addMessage(role, text, type, audioUrl) {
+    console.log("📨 render [%s] type=%s: %.80s", role, type || "msg", text);
+
     welcomeEl.hidden = true;
 
     // Remove typing indicator if present
@@ -126,39 +128,69 @@
     if (typingEl) typingEl.remove();
 
     const div = document.createElement("div");
-    div.className = `msg ${role}${type === "error" ? " error" : ""}${type === "done" ? " done" : ""}`;
+    const classes = ["msg", role];
+    if (type === "error") classes.push("error");
+    if (type === "done") classes.push("done");
+    if (type === "otp") classes.push("otp-request");
+    div.className = classes.join(" ");
 
-    let html = "";
+    const safeText = escapeHtml(text);
+
     if (role === "user") {
-      html = `<div class="sender">You</div>${escapeHtml(text)}`;
+      div.innerHTML = `<div class="sender">You</div>${safeText}`;
     } else {
-      html = `<div class="sender">🛵 Assistant</div>${escapeHtml(text)}`;
-      if (type === "confirmation" && extra) {
-        html += `<div class="confirm-chips">
+      const dataAttr = escapeAttr(text);
+      const audioBtn = ttsEnabled && text
+        ? ` <button class="play-audio-btn" data-text="${dataAttr}" title="Play">🔊</button>`
+        : "";
+      div.innerHTML = `<div class="sender">🛵 Assistant</div>${safeText}${audioBtn}`;
+
+      if (type === "confirmation") {
+        div.innerHTML += `<div class="confirm-chips">
           <button class="chip yes" data-confirm="yes">✅ Yes, proceed</button>
           <button class="chip no" data-confirm="no">❌ No, cancel</button>
         </div>`;
       }
     }
 
-    div.innerHTML = html;
     messagesEl.appendChild(div);
     scrollDown();
 
-    // Agent messages: speak + yield for confirmation auto-tap
-    if (role === "agent") {
-      speak(text);
+    // Agent audio playback
+    if (role === "agent" && type !== "progress") {
+      if (audioUrl) {
+        playAudio(audioUrl);
+      } else {
+        playTextAsAudio(text);
+      }
     }
 
+    // Wire 🔊 buttons
+    div.querySelectorAll(".play-audio-btn").forEach((btn) => {
+      btn.addEventListener("click", () => playTextAsAudio(btn.dataset.text));
+    });
+
     // Wire confirmation chips
-    if (type === "confirmation" && extra) {
+    if (type === "confirmation") {
       div.querySelectorAll(".chip").forEach((chip) => {
         chip.addEventListener("click", () => {
           const confirmed = chip.dataset.confirm === "yes";
-          // Disable both chips
           div.querySelectorAll(".chip").forEach((c) => (c.disabled = true));
           addMessage("user", confirmed ? "Yes, proceed!" : "No, cancel");
-          confirmOrder(confirmed);
+
+          if (!confirmed) {
+            confirmOrder(false);
+            return;
+          }
+
+          // "Yes" means different things depending on current stage:
+          if (sessionStatus === "parsed") {
+            // Stage 1: start searching Zepto
+            startExecution();
+          } else if (sessionStatus === "awaiting_confirmation") {
+            // Stage 2: place the order
+            confirmOrder(true);
+          }
         });
       });
     }
@@ -184,6 +216,21 @@
     return d.innerHTML;
   }
 
+  function escapeAttr(text) {
+    if (!text) return "";
+    return String(text).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function isMessageAlreadyRendered(role, text) {
+    if (!text) return false;
+    const t = text.trim();
+    return Array.from(messagesEl.querySelectorAll(`.msg.${role}`)).some((el) => {
+      // Get the message body by removing the sender prefix text
+      const full = el.textContent.replace("You", "").replace("🛵 Assistant", "").trim();
+      return full === t || el.textContent.includes(t);
+    });
+  }
+
   // ── API ─────────────────────────────────────────────────────────
   async function api(method, path, body) {
     const opts = {
@@ -191,22 +238,32 @@
       headers: { "Content-Type": "application/json" },
     };
     if (body) opts.body = JSON.stringify(body);
+    console.log("🌐 %s %s", method, path);
     const resp = await fetch(path, opts);
     if (!resp.ok) {
       const errBody = await resp.json().catch(() => ({}));
       throw new Error(errBody.detail || `HTTP ${resp.status}`);
     }
-    return resp.json();
+    const data = await resp.json();
+    console.log("🌐 → status=%s msgs=%d", data.status, (data.messages || []).length);
+    return data;
   }
 
   // ── Command lifecycle ───────────────────────────────────────────
 
   async function handleSend() {
+    if (isSending) {
+      console.log("⏳ Already sending — ignoring duplicate");
+      return;
+    }
     const text = textInput.value.trim();
     if (!text) return;
+    isSending = true;
     textInput.value = "";
     sendBtn.disabled = true;
+    primeAudio();
 
+    console.log("📤 SEND: %.150s", text);
     addMessage("user", text);
     showTyping();
 
@@ -220,54 +277,51 @@
       renderMessages(data.messages || []);
       updateStatus(data);
 
-      // If this was a new parse, start execution automatically after a beat
-      if (data.status === "parsed" && !sessionId) {
-        // Actually sessionId is now set, check if we should auto-execute
-        // We won't auto-execute - wait for user confirmation via chips
+      // If the backend kicked off execution (e.g. via spoken "yes"),
+      // start polling for progress
+      if (["searching", "adding_to_cart", "checking_out", "awaiting_confirmation"].includes(data.status)) {
+        startPolling();
       }
     } catch (err) {
+      console.error("❌ Send failed:", err);
       addMessage("agent", `Oops: ${err.message}`, "error");
       updateStatus({ status: "error" });
     } finally {
       sendBtn.disabled = false;
-    }
-  }
-
-  async function confirmOrder(confirmed) {
-    if (!sessionId) return;
-
-    try {
-      // /say handles yes/no auto-detection, or use /confirm directly
-      const data = await api("POST", `/api/v1/agent/confirm/${sessionId}`, {
-        confirmed,
-      });
-      renderMessages(data.messages || []);
-      updateStatus(data);
-
-      if (confirmed && data.status === "awaiting_confirmation") {
-        // Still awaiting → start the execution flow
-        await startExecution();
-      } else if (confirmed && data.status === "searching") {
-        // Already proceeded → start polling
-        startPolling();
-      } else if (data.status === "checking_out" || data.status === "completed") {
-        startPolling();
-      }
-    } catch (err) {
-      addMessage("agent", `Error: ${err.message}`, "error");
+      isSending = false;
     }
   }
 
   async function startExecution() {
     if (!sessionId) return;
+    console.log("▶️ Starting execution for session %s", sessionId);
     showTyping();
-
     try {
       const data = await api("POST", `/api/v1/agent/execute/${sessionId}`);
       renderMessages(data.messages || []);
       updateStatus(data);
       startPolling();
     } catch (err) {
+      console.error("❌ Execution failed:", err);
+      addMessage("agent", `Error: ${err.message}`, "error");
+    }
+  }
+
+  async function confirmOrder(confirmed) {
+    if (!sessionId) return;
+    primeAudio();
+
+    try {
+      const data = await api("POST", `/api/v1/agent/confirm/${sessionId}`, { confirmed });
+      renderMessages(data.messages || []);
+      updateStatus(data);
+
+      const s = data.status;
+      if (["searching", "adding_to_cart", "checking_out", "awaiting_confirmation"].includes(s)) {
+        startPolling();
+      }
+    } catch (err) {
+      console.error("❌ Confirm failed:", err);
       addMessage("agent", `Error: ${err.message}`, "error");
     }
   }
@@ -275,6 +329,7 @@
   // ── Polling ─────────────────────────────────────────────────────
   function startPolling() {
     if (pollingId) clearInterval(pollingId);
+    console.log("⏳ Polling started for session %s", sessionId);
 
     pollingId = setInterval(async () => {
       try {
@@ -285,40 +340,41 @@
         if (["completed", "cancelled", "failed"].includes(data.status)) {
           clearInterval(pollingId);
           pollingId = null;
+          console.log("⏳ Polling stopped — terminal state:", data.status);
         }
-      } catch (_) { /* ignore transient polling errors */ }
+      } catch (_) { /* transient */ }
     }, 1200);
   }
 
   // ── UI updates ──────────────────────────────────────────────────
   function renderMessages(messages) {
-    if (!messages || !messages.length) return;
+    if (!messages || !messages.length) {
+      console.log("📨 renderMessages: no messages");
+      return;
+    }
+    console.log("📨 renderMessages: %d msgs (known=%d)", messages.length, knownMessageCount);
 
-    // Only render new messages
+    let added = 0;
     for (let i = knownMessageCount; i < messages.length; i++) {
       const m = messages[i];
-      // Skip if already rendered (check by text + role)
-      const existing = messagesEl.querySelectorAll(".msg");
-      let alreadyShown = false;
-      existing.forEach((el) => {
-        const textEl = el.querySelector(":scope > :not(.sender):not(.confirm-chips)");
-        if (textEl && textEl.textContent.trim() === m.text && el.classList.contains(m.role)) {
-          alreadyShown = true;
-        }
-      });
-      if (!alreadyShown) {
-        addMessage(m.role, m.text, m.type || "message", m.type === "confirmation" ? m : null);
+      if (!m || !m.text) continue;
 
-        // If it's a confirmation message, auto-tap if we have a pending confirmation
-        // But let the user tap manually for better experience
+      if (isMessageAlreadyRendered(m.role, m.text)) {
+        console.log("📨  skip [%d] role=%s (already shown)", i, m.role);
+        continue;
       }
+
+      addMessage(m.role, m.text, m.type || "message", m.audio_url || null);
+      added++;
     }
+    console.log("📨 renderMessages: added %d new messages", added);
     knownMessageCount = messages.length;
   }
 
   function updateStatus(data) {
     if (!data) return;
     const s = data.status || "init";
+    sessionStatus = s;
     statusBadge.textContent = s.replace(/_/g, " ");
     statusBadge.className = "status-badge";
     if (["searching", "adding_to_cart", "checking_out"].includes(s)) {
@@ -329,21 +385,13 @@
       statusBadge.classList.add("done");
       statusBadge.textContent = "Done! 🎉";
     }
-  }
-
-  // ── Reset / new session ─────────────────────────────────────────
-  function resetSession() {
-    sessionId = null;
-    knownMessageCount = 0;
-    if (pollingId) {
-      clearInterval(pollingId);
-      pollingId = null;
-    }
+    console.log("📊 Status: %s", s);
   }
 
   // ── Event listeners ─────────────────────────────────────────────
 
   micBtn.addEventListener("click", () => {
+    primeAudio();
     if (isListening) { stopListening(); return; }
     startListening();
   });
@@ -361,18 +409,21 @@
     }
   });
 
+  chatEl.addEventListener("click", primeAudio);
+
   ttsToggle.addEventListener("click", () => {
     ttsEnabled = !ttsEnabled;
     ttsIcon.textContent = ttsEnabled ? "🔊" : "🔇";
     ttsToggle.classList.toggle("muted", !ttsEnabled);
-    if (!ttsEnabled) window.speechSynthesis.cancel();
+    console.log("🔊 TTS %s", ttsEnabled ? "ON" : "OFF");
   });
 
   // ── Init ────────────────────────────────────────────────────────
   if (!supportsSTT()) {
     micBtn.title = "Speech not supported";
     micBtn.style.opacity = "0.35";
+    console.log("🎤 STT not available in this browser");
   }
 
-  console.log("🛵 Zepto Voice Agent ready");
+  console.log("✅ Zepto Voice Agent ready");
 })();

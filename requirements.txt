@@ -11,6 +11,9 @@ openai==1.65.0
 # Agent — browser automation
 playwright==1.49.0
 
+# Agent — text-to-speech
+pyttsx3==2.99
+
 # Dev
 pytest==8.3.2
 httpx==0.27.0

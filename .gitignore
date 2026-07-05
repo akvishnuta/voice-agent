@@ -13,3 +13,7 @@ env/
 .ruff_cache/
 dist/
 build/
+
+# Generated TTS audio files
+app/static/audio/*.wav
+app/static/audio/*.aiff

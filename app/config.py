@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     zepto_pincode: str = ""
     browser_headless: bool = False
 
+    # Dry-run mode (testing)
+    dry_run: bool = False
+
     # Playwright
     playwright_cookies_path: str = ".zepto_cookies.json"
 
