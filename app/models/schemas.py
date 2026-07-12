@@ -65,12 +65,17 @@ class SessionStatus(BaseModel):
     confirmation_data: dict | None = None
     otp_requested: bool = False
     messages: list[ChatMessage] = []
+    total_messages: int = Field(
+        default=0, description="Total message count in the session (for frontend tracking)"
+    )
 
 
 class ConfirmRequest(BaseModel):
     confirmed: bool
+    since: int = Field(default=0, ge=0, description="Only return messages after this index")
 
 
 class SayRequest(BaseModel):
     session_id: str = ""
     text: str = Field(min_length=1, description="User's spoken / typed response")
+    since: int = Field(default=0, ge=0, description="Only return messages after this index")

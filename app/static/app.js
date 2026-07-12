@@ -37,6 +37,7 @@
       } catch (_) { /* noop */ }
     }
     if (audioContext && audioContext.state === "suspended") {
+      console.log("Audio context suspended")
       audioContext.resume().catch(() => {});
     }
   }
@@ -156,8 +157,8 @@
     messagesEl.appendChild(div);
     scrollDown();
 
-    // Agent audio playback
-    if (role === "agent" && type !== "progress") {
+    // Agent audio playback — speak every agent message, including progress
+    if (role === "agent") {
       if (audioUrl) {
         playAudio(audioUrl);
       } else {
@@ -204,6 +205,11 @@
     scrollDown();
   }
 
+  function removeTyping() {
+    const el = messagesEl.querySelector(".msg.typing-indicator");
+    if (el) el.remove();
+  }
+
   function scrollDown() {
     requestAnimationFrame(() => {
       chatEl.scrollTop = chatEl.scrollHeight;
@@ -245,7 +251,8 @@
       throw new Error(errBody.detail || `HTTP ${resp.status}`);
     }
     const data = await resp.json();
-    console.log("🌐 → status=%s msgs=%d", data.status, (data.messages || []).length);
+    console.log("🌐 → status=%s new_msgs=%d total=%s",
+                data.status, (data.messages || []).length, data.total_messages);
     return data;
   }
 
@@ -271,11 +278,18 @@
       const data = await api("POST", "/api/v1/agent/say", {
         session_id: sessionId || "",
         text: text,
+        since: knownMessageCount,
       });
 
       sessionId = data.session_id;
       renderMessages(data.messages || []);
+      knownMessageCount = data.total_messages ?? knownMessageCount;
       updateStatus(data);
+
+      // Clear typing if no new messages were returned
+      if (!data.messages || !data.messages.length) {
+        removeTyping();
+      }
 
       // If the backend kicked off execution (e.g. via spoken "yes"),
       // start polling for progress
@@ -297,9 +311,17 @@
     console.log("▶️ Starting execution for session %s", sessionId);
     showTyping();
     try {
-      const data = await api("POST", `/api/v1/agent/execute/${sessionId}`);
+      const data = await api("POST", `/api/v1/agent/execute/${sessionId}?since=${knownMessageCount}`);
       renderMessages(data.messages || []);
+      knownMessageCount = data.total_messages ?? knownMessageCount;
       updateStatus(data);
+
+      // If no new messages yet (background task still starting), clear the
+      // typing indicator to avoid a frozen spinner while polling kicks in.
+      if (!data.messages || !data.messages.length) {
+        removeTyping();
+      }
+
       startPolling();
     } catch (err) {
       console.error("❌ Execution failed:", err);
@@ -312,8 +334,12 @@
     primeAudio();
 
     try {
-      const data = await api("POST", `/api/v1/agent/confirm/${sessionId}`, { confirmed });
+      const data = await api("POST", `/api/v1/agent/confirm/${sessionId}`, {
+        confirmed,
+        since: knownMessageCount,
+      });
       renderMessages(data.messages || []);
+      knownMessageCount = data.total_messages ?? knownMessageCount;
       updateStatus(data);
 
       const s = data.status;
@@ -333,8 +359,9 @@
 
     pollingId = setInterval(async () => {
       try {
-        const data = await api("GET", `/api/v1/agent/status/${sessionId}`);
+        const data = await api("GET", `/api/v1/agent/status/${sessionId}?since=${knownMessageCount}`);
         renderMessages(data.messages || []);
+        knownMessageCount = data.total_messages ?? knownMessageCount;
         updateStatus(data);
 
         if (["completed", "cancelled", "failed"].includes(data.status)) {
@@ -348,27 +375,20 @@
 
   // ── UI updates ──────────────────────────────────────────────────
   function renderMessages(messages) {
-    if (!messages || !messages.length) {
-      console.log("📨 renderMessages: no messages");
-      return;
-    }
-    console.log("📨 renderMessages: %d msgs (known=%d)", messages.length, knownMessageCount);
+    if (!messages || !messages.length) return;
+    console.log("📨 renderMessages: rendering %d new message(s)", messages.length);
 
-    let added = 0;
-    for (let i = knownMessageCount; i < messages.length; i++) {
-      const m = messages[i];
+    for (const m of messages) {
       if (!m || !m.text) continue;
 
+      // Safety check — avoid duplicates if a race condition occurs
       if (isMessageAlreadyRendered(m.role, m.text)) {
-        console.log("📨  skip [%d] role=%s (already shown)", i, m.role);
+        console.log("📨  skip role=%s (already shown)", m.role);
         continue;
       }
 
       addMessage(m.role, m.text, m.type || "message", m.audio_url || null);
-      added++;
     }
-    console.log("📨 renderMessages: added %d new messages", added);
-    knownMessageCount = messages.length;
   }
 
   function updateStatus(data) {

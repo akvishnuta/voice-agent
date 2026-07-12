@@ -54,6 +54,7 @@ class Session:
             confirmation_data=self.confirmation_data,
             otp_requested=self.otp_requested,
             messages=self.messages,
+            total_messages=len(self.messages),
         )
 
     def add_message(self, role: str, text: str, msg_type: str = "message",
@@ -339,6 +340,7 @@ def confirm_session(session_id: str, confirmed: bool) -> Session | None:
 
 async def say_to_session(session_id: str, text: str) -> Session | None:
     """Send a user's spoken/typed message to an active session."""
+    logger.info("USER Query registered: %.200s", text)
     session = get_session(session_id)
     if not session:
         return None

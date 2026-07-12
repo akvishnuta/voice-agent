@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _respond(session, since: int = 0) -> SessionStatus:
+    """Build a SessionStatus response, returning only messages after *since*."""
+    status = session.to_status()
+    total = status.total_messages
+    status.messages = session.messages[since:] if since < total else []
+    return status
+
+
 # ═══════════════════════════════════════════════════════════════════════
 #  Agent endpoints
 # ═══════════════════════════════════════════════════════════════════════
@@ -52,11 +60,12 @@ async def parse_command(req: ParseRequest):
 
 
 @router.post("/agent/execute/{session_id}", response_model=SessionStatus)
-async def execute_order(session_id: str):
+async def execute_order(session_id: str, since: int = Query(default=0, ge=0)):
     """Start executing a parsed order — searches Zepto, adds to cart,
     then pauses for user confirmation."""
     logger.info("POST /agent/execute/%s", session_id)
     session = get_session(session_id)
+    print(f"session : ")
     if not session:
         logger.warning("Session %s not found", session_id)
         raise HTTPException(status_code=404, detail="Session not found")
@@ -74,17 +83,17 @@ async def execute_order(session_id: str):
     current = get_session(session_id)
     status = current.status if current else "unknown"
     logger.info("→ session=%s → status=%s", session_id, status)
-    return session.to_status()
+    return _respond(current, since)
 
 
 @router.get("/agent/status/{session_id}", response_model=SessionStatus)
-async def get_status(session_id: str):
-    """Poll the current status — returns full state including message history."""
+async def get_status(session_id: str, since: int = Query(default=0, ge=0)):
+    """Poll the current status — returns new messages since the given index."""
     session = get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    logger.debug("GET /agent/status/%s → %s", session_id, session.status)
-    return session.to_status()
+    logger.debug("GET /agent/status/%s → %s (since=%d)", session_id, session.status, since)
+    return _respond(session, since)
 
 
 @router.post("/agent/confirm/{session_id}", response_model=SessionStatus)
@@ -99,7 +108,7 @@ async def confirm_order(session_id: str, body: ConfirmRequest):
             detail="Session not found or not awaiting confirmation",
         )
     logger.info("→ session=%s → status=%s", session_id, session.status)
-    return session.to_status()
+    return _respond(session, body.since)
 
 
 @router.post("/agent/say", response_model=SessionStatus)
@@ -107,7 +116,7 @@ async def say_to_agent(req: SayRequest):
     """Send a spoken / typed utterance to the agent.
 
     If the agent is waiting for confirmation, yes/no is auto-detected.
-    The full message history is returned so the frontend can render the chat.
+    Only new messages (since the given index) are returned.
     """
     logger.info("POST /agent/say — session=%s , text (len=%d): %.150s",
                 req.session_id or "(new)", len(req.text), req.text)
@@ -120,7 +129,7 @@ async def say_to_agent(req: SayRequest):
             logger.error("New session parse failed: %s", session.error)
             raise HTTPException(status_code=422, detail=session.error)
         logger.info("→ new session=%s, status=%s", session.session_id, session.status)
-        return session.to_status()
+        return _respond(session, req.since)
 
     session = await say_to_session(req.session_id, req.text)
     if not session:
@@ -129,7 +138,7 @@ async def say_to_agent(req: SayRequest):
 
     logger.info("→ session=%s → status=%s, msg_count=%d",
                 session.session_id, session.status, len(session.messages))
-    return session.to_status()
+    return _respond(session, req.since)
 
 
 @router.get("/agent/sessions", response_model=list[SessionStatus])
