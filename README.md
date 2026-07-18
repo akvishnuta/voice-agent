@@ -1,4 +1,4 @@
-# 🛵 Zepto Voice Agent
+# 🛵 Zepto Voice Agent (Work in progress)
 
 An LLM-powered **voice agent** that logs into your Zepto quick-commerce account, parses
 natural-language shopping commands, searches for products, applies your preferences
